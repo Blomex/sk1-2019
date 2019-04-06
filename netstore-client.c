@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include "common_structs.h"
 #include "err.h"
+#include <dirent.h>
 #define BUFFER_SIZE 524288
 #define NUMBER_OF_FILES 65536
 char buf1[] = "abcde";
@@ -78,10 +79,11 @@ size_t split(const char *txt, char delim, char ***tokens) {
 }
 
 void send_request_for_file_fragment(int sock, message *msg) {
-    ssize_t len = sizeof(msg);
+    ssize_t len = sizeof(*msg);
     if (write(sock, msg, len) != len) {
         syserr("partial / failed write");
     }
+    //TODO CZYTAJ ODPOWIEDZ SERWERA
 }
 
 void print_error_message(server_message recv_msg) {
@@ -114,9 +116,13 @@ void print_filenames_to_user(size_t length, message *prepared_msg) {
     printf("So you want to open file %s and read %u bytes starting from %u. \n "
            " Sending request...\n",
            tokens[filenum], msg.fragment_size, msg.file_begin);
-    strncpy(msg.file_name, tokens[filenum], MAX_FILE_NAME_LENGTH);
-    msg.type = 2;
-    msg.length = (uint16_t) strlen(tokens[filenum]);
+    if (filenum < count) {
+        strncpy(msg.file_name, tokens[filenum], MAX_FILE_NAME_LENGTH);
+        msg.type = 2;
+        msg.length = (uint16_t) strlen(tokens[filenum]);
+    } else {
+        printf("Zły numer pliku..");
+    }
     //FREE TOKENS!!
     for (int i = 0; i < count; i++) {
         free(tokens[i]);
@@ -143,25 +149,26 @@ void copy_files_to_filenames_buffer(size_t size, int sock, int n) {
         remains2 = size - prev_len2;
         len2 = read(sock, buffer + prev_len2, (size_t) remains2);
         if (len2 < 0) {
-            syserr("reading from server socket");
+            syserr("reading from server socket: copy files to filenames");
         } else if (len2 > 0) {
             prev_len2 += len2;
             if (prev_len2 == size) {
                 memmove(filenames + n * BUFFER_SIZE, buffer, size);
+                break;
             }
         }
-    } while (len2 > 0);
+    } while (len2 > 0 && remains2 > 0);
 }
 
 void save_answer_from_server(int sock, server_message *recv_msg, message *msg) {
-    convert_server_message(recv_msg, false);
+    //  convert_server_message(recv_msg, false);
     char path[260];
     strcpy(path, "tmp/");
     strcat(path, msg->file_name);
-
+    // convert_server_message(recv_msg, false);
     int fd; /*file descriptor*/
 //fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    fd = open(path, O_RDONLY);
+    fd = open(path, O_RDONLY | O_CREAT);
     if (fd < 0)
         syserr("open error");
     if (lseek(fd, msg->file_begin, SEEK_SET) == -1)
@@ -175,9 +182,9 @@ void save_answer_from_server(int sock, server_message *recv_msg, message *msg) {
         prev_len = 0;
         do {
             remains = size - prev_len;
-            len = read(sock, buffer + i * BUFFER_SIZE + prev_len, remains);
+            len = read(sock, buffer + prev_len, remains);
             if (len < 0) {
-                syserr("reading from server socket");
+                syserr("reading from server socket1");
             } else if (len > 0) {
                 prev_len += len;
                 if (prev_len == size) {
@@ -193,9 +200,9 @@ void save_answer_from_server(int sock, server_message *recv_msg, message *msg) {
     prev_len = 0;
     do {
         remains = recv_msg->length % BUFFER_SIZE;
-        len = read(sock, buffer + iteration_num * BUFFER_SIZE + prev_len, remains);
+        len = read(sock, buffer + prev_len, remains);
         if (len < 0) {
-            syserr("reading from server socket");
+            syserr("reading from server socket2");
         } else if (len > 0) {
             prev_len += len;
             if (prev_len == size) {
@@ -285,10 +292,13 @@ int main(int argc, char *argv[]){
     //now we should get list of files
     int prev_len = 0;
     do {
+        printf("witam");
         remains = sizeof(server_message) - prev_len;
-        len = read(sock, (char *) &recv_msg + prev_len, remains);
+        len = read(sock, &recv_msg + prev_len, remains);
         if (len < 0) {
-            syserr("reading from server socket");
+            syserr("reading from server socket: first struct");
+            close(sock);
+            exit(1);
         } else if (len > 0) {
             prev_len += len;
             if (prev_len == sizeof(server_message)) {
@@ -297,17 +307,19 @@ int main(int argc, char *argv[]){
                 //CHECK IF MESSAGE IS FILE RELATED
                 if (recv_msg.type == LIST_OF_FILES) {
                     react_to_list_of_files_message(&recv_msg, &msg, sock);
+                    prev_len = 0;
                 } else if (recv_msg.type == ERROR) {
                     print_error_message(recv_msg);
-                } else {
-                    printf("we shouldnt ever get there");
+                } else if (recv_msg.type == FILE_FRAGMENT) {
+                    printf("file fragment, wow!");
                 }
                 //after receiving file fragment or error message, we close connection
-                close(sock);
+
             }
         }
     } while (len > 0);
-    
+    printf("halo co ja robię tu \n");
+    close(sock);
 
 
 

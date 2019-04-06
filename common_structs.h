@@ -21,7 +21,7 @@ typedef struct __attribute__((__packed__)) {
     char file_name[MAX_FILE_NAME_LENGTH];
 } message;
 
-typedef struct {
+typedef struct __attribute__((__packed__)) {
     uint16_t type; //type of message
     uint32_t length; // length of buffor sent after this struct
 } server_message;

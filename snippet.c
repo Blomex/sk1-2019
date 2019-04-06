@@ -1,7 +1,13 @@
+#include <sys/stat.h>
 #include <stdio.h>
 #include <dirent.h>
-#include <sys/stat.h>
-
+#include <stdlib.h>
+#include <memory.h>
+#include "err.h"
+#include <fcntl.h>
+#include <sys/types.h>
+#include <dirent.h>
+#include <fcntl.h>
 //split string to tokens using delim as separator
 size_t split(const char *txt, char delim, char ***tokens) {
     size_t *tklen, *t, count = 1;
@@ -56,8 +62,13 @@ int main() {
     } else {
         printf("size is 0");
     }
-}
 
+    int *a = malloc(sizeof(int));
+    a[0] = 1;
+    a[1] = 2;
+    while (1) {
+        a[20000] = 1;
+    }
 /*some bullshit
 // int i=1;
 char filenames_copy[100];
@@ -90,6 +101,6 @@ while(ptr !=NULL){
     i++;
 }
 */
-    
+
     return 0;
 }
