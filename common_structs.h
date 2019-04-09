@@ -11,7 +11,7 @@
 #define MAX_FILE_NAME_LENGTH 256
 
 enum { LIST_OF_FILES = 1, ERROR, FILE_FRAGMENT };
-enum { WRONG_FILE_NAME = 1, WRONG_START_ADRESS, ZERO_SIZE_FRAGMENT };
+enum errtype { WRONG_FILE_NAME = 1, WRONG_START_ADRESS, ZERO_SIZE_FRAGMENT };
 
 typedef struct __attribute__((__packed__)) {
     uint16_t type;

@@ -78,21 +78,36 @@ size_t split(const char *txt, char delim, char ***tokens) {
     return count;
 }
 
-void send_request_for_file_fragment(int sock, message *msg) {
+server_message send_request_for_file_fragment(int sock, message *msg) {
     ssize_t len = sizeof(*msg);
     if (write(sock, msg, len) != len) {
         syserr("partial / failed write");
     }
     //TODO CZYTAJ ODPOWIEDZ SERWERA
+    server_message recv_msg;
+    int prev_len = 0;
+    do {
+        int remains = sizeof(recv_msg) - prev_len;
+        len = read(sock, &recv_msg, remains);
+        if (len < 0) {
+            syserr("reading from server socket");
+        } else if (len > 0) {
+            prev_len += len;
+            if (prev_len == sizeof(recv_msg)) {
+                printf("Received server message..");
+                return recv_msg;
+            }
+        }
+    } while (len > 0);
 }
 
 void print_error_message(server_message recv_msg) {
     switch (recv_msg.length) {
-        case WRONG_FILE_NAME:printf("Niepoprawna nazwa pliku");
+        case WRONG_FILE_NAME:printf("Niepoprawna nazwa pliku\n");
             break;
-        case WRONG_START_ADRESS:printf("Adres początkowy pliku poza zasięgiem");
+        case WRONG_START_ADRESS:printf("Adres początkowy pliku poza zasięgiem\n");
             break;
-        case ZERO_SIZE_FRAGMENT:printf("Niepoprawna wielkość fragmentu: 0 bajtów");
+        case ZERO_SIZE_FRAGMENT:printf("Niepoprawna wielkość fragmentu: 0 bajtów\n");
             break;
         default:break;
     }
@@ -104,8 +119,8 @@ void print_filenames_to_user(size_t length, message *prepared_msg) {
     char delim = '|';
     count = split(filenames, delim, &tokens);
 
-    for (int i = 0; i < count; i++) {
-        printf("%d. %s\n", i, tokens[i]);
+    for (size_t i = 0; i < count; i++) {
+        printf("%ld. %s\n", i, tokens[i]);
     }
 
     //Do rest of things
@@ -123,8 +138,8 @@ void print_filenames_to_user(size_t length, message *prepared_msg) {
     } else {
         printf("Zły numer pliku..");
     }
-    //FREE TOKENS!!
-    for (int i = 0; i < count; i++) {
+    //remember to free tokens created by split
+    for (size_t i = 0; i < count; i++) {
         free(tokens[i]);
     }
     free(tokens);
@@ -142,7 +157,7 @@ void print_filenames_to_user(size_t length, message *prepared_msg) {
 }
 
 void copy_files_to_filenames_buffer(size_t size, int sock, int n) {
-    int prev_len2 = 0;
+    size_t prev_len2 = 0;
     ssize_t len2;
     ssize_t remains2;
     do {
@@ -162,27 +177,28 @@ void copy_files_to_filenames_buffer(size_t size, int sock, int n) {
 
 void save_answer_from_server(int sock, server_message *recv_msg, message *msg) {
     //  convert_server_message(recv_msg, false);
+    printf("Zapisuje odp od serwa\n");
     char path[260];
     strcpy(path, "tmp/");
     strcat(path, msg->file_name);
     // convert_server_message(recv_msg, false);
     int fd; /*file descriptor*/
 //fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    fd = open(path, O_RDONLY | O_CREAT);
+    fd = open(path, O_WRONLY | O_CREAT, 0666);
     if (fd < 0)
         syserr("open error");
     if (lseek(fd, msg->file_begin, SEEK_SET) == -1)
         syserr("lseek error");
     int64_t len;
-    uint32_t prev_len = 0;
-    size_t remains;
-    int size = BUFFER_SIZE;
+    int64_t prev_len = 0;
+    int64_t remains;
+    ssize_t size = BUFFER_SIZE;
     int iteration_num = recv_msg->length / BUFFER_SIZE;
     for (int i = 0; i < iteration_num; i++) {
         prev_len = 0;
         do {
             remains = size - prev_len;
-            len = read(sock, buffer + prev_len, remains);
+            len = read(sock, buffer + prev_len, (size_t) remains);
             if (len < 0) {
                 syserr("reading from server socket1");
             } else if (len > 0) {
@@ -197,9 +213,12 @@ void save_answer_from_server(int sock, server_message *recv_msg, message *msg) {
         } while (len > 0);
     }
     //last part
+    size = recv_msg->length % BUFFER_SIZE;
     prev_len = 0;
     do {
-        remains = recv_msg->length % BUFFER_SIZE;
+        printf("Zapisana ostatnia czesc \n");
+        printf("%d bajtów \n", recv_msg->length % BUFFER_SIZE);
+        remains = recv_msg->length % BUFFER_SIZE - prev_len;
         len = read(sock, buffer + prev_len, remains);
         if (len < 0) {
             syserr("reading from server socket2");
@@ -209,9 +228,13 @@ void save_answer_from_server(int sock, server_message *recv_msg, message *msg) {
                 if (write(fd, buffer, size) != size) {
                     syserr("write error");
                 }
+                printf("Przeczytany caly plik \n");
+                break;
             }
+            printf("Narazie przeczytaliśmy: %d, pozostało: %d\n", prev_len, remains);
         }
     } while (len > 0);
+    printf("plik zamkniety\n");
     close(fd);
 }
 
@@ -225,8 +248,9 @@ void react_to_list_of_files_message(server_message *recv_msg, message *msg, int 
     print_filenames_to_user(recv_msg->length, msg);
     convert_client_message(msg, true);
     //msg is prepared to send here
-    send_request_for_file_fragment(sock, msg);
+    *recv_msg = send_request_for_file_fragment(sock, msg);
     convert_client_message(msg, false);
+    convert_server_message(recv_msg, false);
     save_answer_from_server(sock, recv_msg, msg);
 }
 
@@ -245,7 +269,7 @@ int main(int argc, char *argv[]){
     }
     char *port;
     if(argc==2)
-        port="6543";
+        port = "6542";
     else
         port = argv[2];
     
@@ -283,7 +307,7 @@ int main(int argc, char *argv[]){
     // we send numbers in network byte order
     msg.type=1;
     convert_client_message(&msg, true);
-    len = sizeof(msg);
+    len = sizeof(uint16_t);
 
     if (write(sock, &msg, (size_t) len) != len) {
       syserr("partial / failed write");
@@ -291,6 +315,7 @@ int main(int argc, char *argv[]){
     size_t remains;
     //now we should get list of files
     int prev_len = 0;
+    bool FileReceived = false;
     do {
         printf("witam");
         remains = sizeof(server_message) - prev_len;
@@ -307,21 +332,24 @@ int main(int argc, char *argv[]){
                 //CHECK IF MESSAGE IS FILE RELATED
                 if (recv_msg.type == LIST_OF_FILES) {
                     react_to_list_of_files_message(&recv_msg, &msg, sock);
-                    prev_len = 0;
+                    FileReceived = true;
                 } else if (recv_msg.type == ERROR) {
                     print_error_message(recv_msg);
-                } else if (recv_msg.type == FILE_FRAGMENT) {
-                    printf("file fragment, wow!");
+                    break;
+                } else {
+                    //server started sending communicate we didnt expect
+                    printf("Server is not working correctly. Please try again later.\n");
+                    break;
                 }
                 //after receiving file fragment or error message, we close connection
 
             }
         }
-    } while (len > 0);
-    printf("halo co ja robię tu \n");
+    } while (!FileReceived);
+
+    //after receiving file, client closes sock
+
     close(sock);
-
-
 
     
     
