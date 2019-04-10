@@ -12,6 +12,7 @@
 #include <dirent.h>
 #define BUFFER_SIZE 524288
 #define NUMBER_OF_FILES 65536
+#define PORT 6543
 char buf1[] = "abcde";
 char buf2[] = "ABCDE";
 char buffer[BUFFER_SIZE];
@@ -57,12 +58,15 @@ void convert_server_message(server_message *msg, bool ishton) {
 /// \param delim separator
 /// \param tokens tablica tokenów
 /// \return ilość tokenów
+// więcej : https://stackoverflow.com/questions/9210528/split-string-with-delimiters-in-c
 size_t split(const char *txt, char delim, char ***tokens) {
     size_t *tklen, *t, count = 1;
     char **arr, *p = (char *) txt;
 
-    while (*p != '\0') if (*p++ == delim) count += 1;
-    t = tklen = calloc(count, sizeof(int));
+    while (*p != '\0')
+        if (*p++ == delim)
+            count += 1;
+    t = tklen = calloc(count, sizeof(size_t));
     for (p = (char *) txt; *p != '\0'; p++)
         *p == delim ? *t++ : (*t)++;
     *tokens = arr = malloc(count * sizeof(char *));
@@ -117,6 +121,7 @@ void print_filenames_to_user(size_t length, message *prepared_msg) {
     char **tokens;
     size_t count;
     char delim = '|';
+    //split to tokens
     count = split(filenames, delim, &tokens);
 
     for (size_t i = 0; i < count; i++) {
@@ -125,18 +130,25 @@ void print_filenames_to_user(size_t length, message *prepared_msg) {
 
     //Do rest of things
     message msg;
-    uint16_t filenum;
-    scanf("%hi\n %u\n %u", &filenum, &msg.file_begin, &msg.fragment_size);
+    uint16_t filenum = count + 1;
 
-    printf("So you want to open file %s and read %u bytes starting from %u. \n "
-           " Sending request...\n",
-           tokens[filenum], msg.fragment_size, msg.file_begin);
-    if (filenum < count) {
-        strncpy(msg.file_name, tokens[filenum], MAX_FILE_NAME_LENGTH);
-        msg.type = 2;
-        msg.length = (uint16_t) strlen(tokens[filenum]);
-    } else {
-        printf("Zły numer pliku..");
+    while (filenum >= count) {
+        printf("Podaj numer pliku który chcesz otworzyć: \n");
+        scanf("%hi", &filenum);
+        printf("Podaj od którego bajta chcesz zacząć czytać plik: \n");
+        scanf("%u", &msg.file_begin);
+        printf("Podaj liczbę bajtów do przeczytania: \n");
+        scanf("%u", &msg.fragment_size);
+        if (filenum < count) {
+            printf("A zatem chcesz otworzyć plik %s i przeczytać %u bajtów rozpoczynając od %u?\n"
+                   "Wysyłam zapytanie do serwera ...", tokens[filenum], msg.fragment_size, msg.file_begin);
+            strncpy(msg.file_name, tokens[filenum], MAX_FILE_NAME_LENGTH);
+            msg.type = 2;
+            msg.length = (uint16_t) strlen(tokens[filenum]);
+        } else {
+            fprintf(stderr, "Zły numer pliku.. \n Wpisz ponownie pamiętając o formacie:"
+                            "\n numer pliku \n początek fragmentu \n liczba bajtów\n");
+        }
     }
     //remember to free tokens created by split
     for (size_t i = 0; i < count; i++) {
@@ -145,15 +157,8 @@ void print_filenames_to_user(size_t length, message *prepared_msg) {
     free(tokens);
 
     //SEND REQUEST FOR FILE FRAGMENT
+
     *prepared_msg = msg;
-    /*non elegant shit
-    char filenames_copy[NUMBER_OF_FILES*(NAME_MAX+2)];
-    strncpy(filenames_copy, filenames, length);
-    char *ptr = strtok(filenames_copy, delim);
-    while(ptr !=NULL){
-        printf("%d. '%s',\n", i, ptr);
-        i++;
-    }*/
 }
 
 void copy_files_to_filenames_buffer(size_t size, int sock, int n) {
@@ -178,64 +183,69 @@ void copy_files_to_filenames_buffer(size_t size, int sock, int n) {
 void save_answer_from_server(int sock, server_message *recv_msg, message *msg) {
     //  convert_server_message(recv_msg, false);
     printf("Zapisuje odp od serwa\n");
-    char path[260];
-    strcpy(path, "tmp/");
-    strcat(path, msg->file_name);
-    // convert_server_message(recv_msg, false);
-    int fd; /*file descriptor*/
+    if (recv_msg->type == ERROR) {
+        print_error_message(*recv_msg);
+        return;
+    } else if (recv_msg->type == FILE_FRAGMENT) {
+        char path[260];
+        strcpy(path, "tmp/");
+        strcat(path, msg->file_name);
+        // convert_server_message(recv_msg, false);
+        int fd; /*file descriptor*/
 //fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    fd = open(path, O_WRONLY | O_CREAT, 0666);
-    if (fd < 0)
-        syserr("open error");
-    if (lseek(fd, msg->file_begin, SEEK_SET) == -1)
-        syserr("lseek error");
-    int64_t len;
-    int64_t prev_len = 0;
-    int64_t remains;
-    ssize_t size = BUFFER_SIZE;
-    int iteration_num = recv_msg->length / BUFFER_SIZE;
-    for (int i = 0; i < iteration_num; i++) {
+        fd = open(path, O_WRONLY | O_CREAT, 0666);
+        if (fd < 0)
+            syserr("open error");
+        if (lseek(fd, msg->file_begin, SEEK_SET) == -1)
+            syserr("lseek error");
+        int64_t len;
+        int64_t prev_len = 0;
+        int64_t remains;
+        ssize_t size = BUFFER_SIZE;
+        int iteration_num = recv_msg->length / BUFFER_SIZE;
+        for (int i = 0; i < iteration_num; i++) {
+            prev_len = 0;
+            do {
+                remains = size - prev_len;
+                len = read(sock, buffer + prev_len, (size_t) remains);
+                if (len < 0) {
+                    syserr("reading from server socket1");
+                } else if (len > 0) {
+                    prev_len += len;
+                    if (prev_len == size) {
+                        //we have whole buffer
+                        if (write(fd, buffer, BUFFER_SIZE) != BUFFER_SIZE) {
+                            syserr("write error");
+                        }
+                    }
+                }
+            } while (len > 0);
+        }
+        //last part
+        size = recv_msg->length % BUFFER_SIZE;
         prev_len = 0;
         do {
-            remains = size - prev_len;
-            len = read(sock, buffer + prev_len, (size_t) remains);
+            printf("Zapisana ostatnia czesc \n");
+            printf("%d bajtów \n", recv_msg->length % BUFFER_SIZE);
+            remains = recv_msg->length % BUFFER_SIZE - prev_len;
+            len = read(sock, buffer + prev_len, remains);
             if (len < 0) {
-                syserr("reading from server socket1");
+                syserr("reading from server socket2");
             } else if (len > 0) {
                 prev_len += len;
                 if (prev_len == size) {
-                    //we have whole buffer
-                    if (write(fd, buffer, BUFFER_SIZE) != BUFFER_SIZE) {
+                    if (write(fd, buffer, size) != size) {
                         syserr("write error");
                     }
+                    printf("Przeczytany caly plik \n");
+                    break;
                 }
+                printf("Narazie przeczytaliśmy: %d, pozostało: %d\n", prev_len, remains);
             }
         } while (len > 0);
+        printf("plik zamkniety\n");
+        close(fd);
     }
-    //last part
-    size = recv_msg->length % BUFFER_SIZE;
-    prev_len = 0;
-    do {
-        printf("Zapisana ostatnia czesc \n");
-        printf("%d bajtów \n", recv_msg->length % BUFFER_SIZE);
-        remains = recv_msg->length % BUFFER_SIZE - prev_len;
-        len = read(sock, buffer + prev_len, remains);
-        if (len < 0) {
-            syserr("reading from server socket2");
-        } else if (len > 0) {
-            prev_len += len;
-            if (prev_len == size) {
-                if (write(fd, buffer, size) != size) {
-                    syserr("write error");
-                }
-                printf("Przeczytany caly plik \n");
-                break;
-            }
-            printf("Narazie przeczytaliśmy: %d, pozostało: %d\n", prev_len, remains);
-        }
-    } while (len > 0);
-    printf("plik zamkniety\n");
-    close(fd);
 }
 
 void react_to_list_of_files_message(server_message *recv_msg, message *msg, int sock) {
@@ -269,7 +279,7 @@ int main(int argc, char *argv[]){
     }
     char *port;
     if(argc==2)
-        port = "6542";
+        port = "PORT";
     else
         port = argv[2];
     

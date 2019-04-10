@@ -13,7 +13,7 @@
 #include <unistd.h>
 #include "common_structs.h"
 #include "err.h"
-#define PORT_NUM 6542 // default port
+#define PORT_NUM 6543 // default port
 #define MAX_PATH 2000
 #define BUFFER_SIZE 300
 #define NUMBER_OF_FILES 65536
@@ -228,15 +228,17 @@ int main(int argc, char *argv[]){
                                 break;
                             }
                             sz = lseek64(f, 0L, SEEK_END);
-                            lseek64(f, 0L, SEEK_SET);
-                            if (sz > data_read.file_begin) {
-                                printf("sz>file_begin");
+                            if (lseek64(f, 0L, SEEK_SET) < 0) {
+                                syserr("lseek64");
+                            }
+                            if (sz < data_read.file_begin) {
+                                printf("sz < file_begin");
                                 //not correct adress
                                 send_error_message(msg_sock, WRONG_START_ADRESS);
                                 break;
                             }
-                            if (lseek64(f, data_read.file_begin, SEEK_SET) != 0) {
-                                syserr("fseek");
+                            if (lseek64(f, data_read.file_begin, SEEK_SET) < 0) {
+                                syserr("lseek64");
                             }
                             //file seeked here
                             //now time to send file to client
@@ -244,6 +246,9 @@ int main(int argc, char *argv[]){
                             already_sent = 0;
                             bool NotReadEverythingYet = true;
                             bool first = true;
+                            if (sz - data_read.file_begin < data_read.fragment_size) {
+                                data_read.fragment_size = sz - data_read.file_begin;
+                            }
                             server_message filefragment = {3, data_read.fragment_size};
                             convert_server_message(&filefragment, true);
                             printf("wow2");
