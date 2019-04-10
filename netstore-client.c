@@ -10,9 +10,9 @@
 #include "common_structs.h"
 #include "err.h"
 #include <dirent.h>
-#define BUFFER_SIZE 524288
+#define BUFFER_SIZE 100
 #define NUMBER_OF_FILES 65536
-#define PORT 6543
+#define PORT 6542
 char buf1[] = "abcde";
 char buf2[] = "ABCDE";
 char buffer[BUFFER_SIZE];
@@ -87,7 +87,6 @@ server_message send_request_for_file_fragment(int sock, message *msg) {
     if (write(sock, msg, len) != len) {
         syserr("partial / failed write");
     }
-    //TODO CZYTAJ ODPOWIEDZ SERWERA
     server_message recv_msg;
     int prev_len = 0;
     do {
@@ -103,6 +102,7 @@ server_message send_request_for_file_fragment(int sock, message *msg) {
             }
         }
     } while (len > 0);
+    return recv_msg;
 }
 
 void print_error_message(server_message recv_msg) {
@@ -117,7 +117,7 @@ void print_error_message(server_message recv_msg) {
     }
 }
 
-void print_filenames_to_user(size_t length, message *prepared_msg) {
+void print_filenames_to_user(message *prepared_msg) {
     char **tokens;
     size_t count;
     char delim = '|';
@@ -156,8 +156,8 @@ void print_filenames_to_user(size_t length, message *prepared_msg) {
     }
     free(tokens);
 
-    //SEND REQUEST FOR FILE FRAGMENT
-
+    //msg ZAWSZE będzie zaicjalizowane jeśli tu dojdziemy
+    //TODO wywalic msg i wszedzie pisac *prepared_msg ?
     *prepared_msg = msg;
 }
 
@@ -213,18 +213,19 @@ void save_answer_from_server(int sock, server_message *recv_msg, message *msg) {
                 } else if (len > 0) {
                     prev_len += len;
                     if (prev_len == size) {
-                        //we have whole buffer
                         if (write(fd, buffer, BUFFER_SIZE) != BUFFER_SIZE) {
                             syserr("write error");
                         }
+                        break;
                     }
                 }
             } while (len > 0);
         }
         //last part
         size = recv_msg->length % BUFFER_SIZE;
+        len = size;
         prev_len = 0;
-        do {
+        while (len > 0) {
             printf("Zapisana ostatnia czesc \n");
             printf("%d bajtów \n", recv_msg->length % BUFFER_SIZE);
             remains = recv_msg->length % BUFFER_SIZE - prev_len;
@@ -240,9 +241,10 @@ void save_answer_from_server(int sock, server_message *recv_msg, message *msg) {
                     printf("Przeczytany caly plik \n");
                     break;
                 }
+                //TODO debug
                 printf("Narazie przeczytaliśmy: %d, pozostało: %d\n", prev_len, remains);
             }
-        } while (len > 0);
+        }
         printf("plik zamkniety\n");
         close(fd);
     }
@@ -255,7 +257,7 @@ void react_to_list_of_files_message(server_message *recv_msg, message *msg, int 
     }
     //last part of message
     copy_files_to_filenames_buffer(recv_msg->length % BUFFER_SIZE, sock, iterations_num);
-    print_filenames_to_user(recv_msg->length, msg);
+    print_filenames_to_user(msg);
     convert_client_message(msg, true);
     //msg is prepared to send here
     *recv_msg = send_request_for_file_fragment(sock, msg);
@@ -269,8 +271,8 @@ int main(int argc, char *argv[]){
     int sock;
     struct addrinfo addr_hints;
     struct addrinfo *addr_result;
-    int i, err;
-    ssize_t len, rcv_len;
+    int err;
+    ssize_t len;
     message msg;
     server_message recv_msg;
     
@@ -279,7 +281,7 @@ int main(int argc, char *argv[]){
     }
     char *port;
     if(argc==2)
-        port = "PORT";
+        port = "6542";
     else
         port = argv[2];
     

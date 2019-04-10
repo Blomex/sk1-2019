@@ -13,9 +13,9 @@
 #include <unistd.h>
 #include "common_structs.h"
 #include "err.h"
-#define PORT_NUM 6543 // default port
-#define MAX_PATH 2000
-#define BUFFER_SIZE 300
+#define PORT_NUM 6542 // default port
+#define MAX_PATH 1000
+#define BUFFER_SIZE 100
 #define NUMBER_OF_FILES 65536
 #define QUEUE_LENGTH 5
 char dir_path[MAX_PATH];
@@ -69,9 +69,11 @@ void send_filefragment(uint32_t *already_sent, const uint32_t *currently_sending
         if (write(sock, buffer, *currently_sending + sizeof(message)) != *currently_sending + sizeof(message)) {
             syserr("partial/failed write");
         }
+        //message also counts to already sent data
+        *already_sent += sizeof(message);
     } else {
         // this is not first fragment we send, so we dont include struct
-        memmove(buffer, filenames, *currently_sending);
+        memmove(buffer, filenames + *already_sent, *currently_sending);
         *already_sent += *currently_sending;
         size_t len = *currently_sending;
         printf("piszemy do klienta...\n");
@@ -244,7 +246,7 @@ int main(int argc, char *argv[]){
                             //now time to send file to client
                             // READ TO OUR BIG BUFFOR FIRST, then send in parts
                             already_sent = 0;
-                            bool NotReadEverythingYet = true;
+                            //bool NotReadEverythingYet = true;
                             bool first = true;
                             if (sz - data_read.file_begin < data_read.fragment_size) {
                                 data_read.fragment_size = sz - data_read.file_begin;
@@ -252,15 +254,19 @@ int main(int argc, char *argv[]){
                             server_message filefragment = {3, data_read.fragment_size};
                             convert_server_message(&filefragment, true);
                             printf("wow2");
-                            while (NotReadEverythingYet) {
+                            while (data_read.fragment_size > 0) {
                                 printf("Sending..\n");
                                 int size_to_read =
-                                    BUFFER_SIZE < data_read.fragment_size ? BUFFER_SIZE : data_read.fragment_size;
+                                    BUFFER_SIZE < data_read.fragment_size ? BUFFER_SIZE - first * sizeof(server_message)
+                                                                          : data_read.fragment_size
+                                        - first * sizeof(server_message);
                                 read(f, filenames, size_to_read);
+                                already_sent = 0; // need to reset this
                                 //fread(filenames, 1, size_to_read, f);
                                 send_filefragment(&already_sent, &size_to_read, filefragment, first, msg_sock);
                                 first = false;
-                                NotReadEverythingYet = false;
+                                data_read.fragment_size -= size_to_read;
+                                //NotReadEverythingYet = false;
                             }
                             break;
                         default:break;
