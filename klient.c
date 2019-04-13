@@ -1,4 +1,4 @@
-#define _LARGEFILE64_SOURCE
+#define _LARGEFILE64_SOURCE //for lseek64
 #include <sys/types.h>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -17,24 +17,6 @@
 char buffer[BUFFER_SIZE];
 char filenames[NUMBER_OF_FILES * (NAME_MAX + 2)];
 
-/*TODO
- * łączenie się z serwerem
- * obsługa polecenia 1 - przysłanie listy plików
- * obsługa polecenia 2 - żądanie fragmentu pliku
- * adres początku fragmentu w bajtach - 4 byte unsigned
- * liczba bajtów do przesłania - 4 byte unsigned
- * długość nazwy pliku - 2 bytes unsigned
- * nazwa pliku - bez bajtu zerowego
- * uruchomienie:
- * ./netstore_client <serwer> [port]
- * */
-
-/// @brief splits string to new array of tokens. They have to be freed manually later.
-/// \param txt string representing tokens with
-/// \param delim deliminator
-/// \param tokens pointer to array of tokens
-/// \return number of tokens created
-/// @desc more : https://stackoverflow.com/questions/9210528/split-string-with-delimiters-in-c
 size_t split(const char *txt, char delim, char ***tokens) {
     size_t *tklen, *t, count = 1;
     char **arr, *p = (char *) txt;
@@ -64,7 +46,7 @@ size_t split(const char *txt, char delim, char ***tokens) {
 /// \return server_message received from sock
 server_message send_request_for_file_fragment(int sock, message *msg) {
     //sending only enough bytes
-    ssize_t len = sizeof(*msg) - MAX_FILE_NAME_LENGTH + msg->length;
+    ssize_t len = sizeof(*msg) - MAX_FILE_NAME_LENGTH + ntohs(msg->length);
     if (write(sock, msg, (size_t) len) != len) {
         syserr("partial / failed write");
     }
@@ -74,6 +56,7 @@ server_message send_request_for_file_fragment(int sock, message *msg) {
         size_t remains = sizeof(recv_msg) - prev_len;
         len = read(sock, &recv_msg, remains);
         if (len < 0) {
+            close(sock);
             syserr("reading from server socket");
         } else if (len > 0) {
             prev_len += len;
@@ -90,9 +73,9 @@ server_message send_request_for_file_fragment(int sock, message *msg) {
 /// \param recv_msg message received from server
 void print_error_message(server_message recv_msg) {
     switch (recv_msg.length) {
-        case WRONG_FILE_NAME:printf("Uncorrect filename\n");
+        case WRONG_FILE_NAME:printf("Incorrect filename\n");
             break;
-        case WRONG_START_ADRESS:printf("offset bigger than file size\n");
+        case WRONG_START_ADRESS:printf("Offset bigger than file size\n");
             break;
         case ZERO_SIZE_FRAGMENT:printf("Incorrect file size: 0 bytes\n");
             break;
@@ -162,6 +145,7 @@ void copy_files_to_filenames_buffer(size_t size, int sock, int n) {
         remains2 = size - prev_len2;
         len2 = read(sock, buffer + prev_len2, (size_t) remains2);
         if (len2 < 0) {
+            close(sock);
             syserr("reading from server socket: copy files to filenames");
         } else if (len2 > 0) {
             prev_len2 += len2;

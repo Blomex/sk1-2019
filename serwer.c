@@ -1,4 +1,4 @@
-#define _LARGEFILE64_SOURCE
+#define _LARGEFILE64_SOURCE //for lseek64
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -191,11 +191,6 @@ int main(int argc, char *argv[]){
                             break;
                         case SEND_FRAGMENT:
                             notReceived = false;
-                            //check if fragment is not 0
-                            if(data_read.fragment_size == 0){
-                                send_error_message(msg_sock, ZERO_SIZE_FRAGMENT);
-                                break;
-                            }
                             long long sz;
                             strcpy(file_path, dir_path);
                             strcat(file_path, "/");
@@ -224,6 +219,11 @@ int main(int argc, char *argv[]){
                             if (sz - data_read.file_begin < data_read.fragment_size) {
                                 data_read.fragment_size = (uint32_t) sz - data_read.file_begin;
                             }
+                            //check if fragment is not 0
+                            if (data_read.fragment_size == 0 || sz - data_read.file_begin == 0) {
+                                send_error_message(msg_sock, ZERO_SIZE_FRAGMENT);
+                                break;
+                            }
                             server_message filefragment = {3, data_read.fragment_size};
                             convert_server_message(&filefragment, true);
                             while (data_read.fragment_size > 0) {
@@ -242,7 +242,7 @@ int main(int argc, char *argv[]){
                     }
                 }
             }
-        } while (notReceived);//?
+        } while (notReceived && len > 0);
     }
     return 0;
 }
