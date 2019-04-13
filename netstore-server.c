@@ -154,7 +154,6 @@ int main(int argc, char *argv[]){
                 prev_len += len;
                 if (prev_len == (ssize_t) expected_len) {
                     // we read 2 bytes, but if it was not list of file request we need extra info
-                    int x = ntohs(data_read.type);
                     if (ntohs(data_read.type) != SEND_LIST && expected_len < sizeof(data_read) - MAX_FILE_NAME_LENGTH) {
                         expected_len = sizeof(data_read) - MAX_FILE_NAME_LENGTH;
                         continue;
@@ -165,7 +164,6 @@ int main(int argc, char *argv[]){
                         expected_len = sizeof(data_read) - MAX_FILE_NAME_LENGTH + ntohs(data_read.length);
                         continue;
                     }
-                    printf("Received: %d bytes \n", expected_len);
                     // we have received a whole structure. let's check first value.
                     convert_client_message(&data_read, false);
                     data_read.file_name[data_read.length] = '\0';
