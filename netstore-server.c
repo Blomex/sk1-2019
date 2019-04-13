@@ -7,83 +7,68 @@
 #include <sys/stat.h>
 #include <stdbool.h>
 #include <memory.h>
-#include <zconf.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include "common_structs.h"
 #include "err.h"
-#define PORT_NUM 6542 // default port
-#define MAX_PATH 1000
+#define PORT_NUM 6543 // default port
 #define BUFFER_SIZE 100
 #define NUMBER_OF_FILES 65536
-#define QUEUE_LENGTH 5
-char dir_path[MAX_PATH];
-char file_path[MAX_PATH];
+char dir_path[PATH_MAX];
+char file_path[PATH_MAX];
 char buffer[BUFFER_SIZE];
 char filenames[NUMBER_OF_FILES * (NAME_MAX + 2)];
 enum types {SEND_LIST=1, SEND_FRAGMENT};
 
-void convert_client_message(message *msg, bool ishton) {
-    if (ishton) {
-        msg->type = htons(msg->type);
-        msg->file_begin = htonl(msg->file_begin);
-        msg->fragment_size = htonl(msg->fragment_size);
-        msg->length = htons(msg->length);
-    } else {
-        msg->type = ntohs(msg->type);
-        msg->file_begin = ntohl(msg->file_begin);
-        msg->fragment_size = ntohl(msg->fragment_size);
-        msg->length = ntohs(msg->length);
-    }
+static uint32_t minimum(uint32_t a, uint32_t b) {
+    return a < b ? a : b;
 }
 
-void convert_server_message(server_message *msg, bool ishton) {
-    if (ishton) {
-        msg->type = htons(msg->type);
-        msg->length = htonl(msg->length);
-    } else {
-        msg->type = ntohs(msg->type);
-        msg->length = ntohl(msg->length);
-    }
-}
-
+/// @brief sends error message to client
+/// \param sock sock on which we're writing to client
+/// \param reason reason of error
 void send_error_message(int sock, enum errtype reason) {
     server_message msg = {ERROR, reason};
     convert_server_message(&msg, true);
     if (write(sock, &msg, sizeof(msg)) != sizeof(msg)) {
         syserr("failed/partial write");
     }
-    //TODO coś jeszcze?
 }
 
+/// @brief send a fragment of bytes up to BUFFER_SIZE to client on given sock
+/// @desc copies *@currently_sending number of bytes (not higher than BUFFER_SIZE) from "filenames" global array
+/// with offset of *@already_sent to 'buffer' global array, then writes those bytes to client socket
+/// \param already_sent pointer to offset of filename buffer
+/// \param currently_sending pointer how much bytes are we sending
+/// \param message  message, which we send before sending first buffer
+/// \param isFirst checking we have to send message or not
+/// \param sock sock where we're writing to client
 void send_filefragment(uint32_t *already_sent, const uint32_t *currently_sending,
                        server_message message, bool isFirst, int sock) {
-    if (isFirst) {//this is first fragment we send, so we need to include struct
-        printf("first fragment is being sent..\n");
+    if (isFirst) {//this is first fragment we send, so we need to include message
         memmove(buffer, &message, sizeof(message));
         *already_sent += *currently_sending;
         memmove(buffer + sizeof(message), filenames, *currently_sending);
-        //here we write amiright?
-        printf("jest struct\n");
         if (write(sock, buffer, *currently_sending + sizeof(message)) != *currently_sending + sizeof(message)) {
             syserr("partial/failed write");
         }
-        //message also counts to already sent data
-        *already_sent += sizeof(message);
     } else {
-        // this is not first fragment we send, so we dont include struct
+        // this is not first fragment we send, so we dont include message
         memmove(buffer, filenames + *already_sent, *currently_sending);
         *already_sent += *currently_sending;
         size_t len = *currently_sending;
-        printf("piszemy do klienta...\n");
-        if (write(sock, buffer, len) != len) {
+        if (write(sock, buffer, len) != (ssize_t) len) {
             syserr("parial / failed write");
         }
     }
-    //one buffor done
 }
 
+/// @brief iterates over all files in a directory with given path and concatenates them
+/// @desc changes "filenames" global array, putting to it string in format firstfile|secondfile|....lastfile
+/// where firstfile...lastfile are files located in directory, which path is specified as argument
+/// \param dir_path path to directory
+/// \return length of string
 uint32_t read_filenames_to_buffer(char *dir_path) {
     filenames[0] = '\0'; // to use strcat correctly
     DIR *dir;
@@ -115,15 +100,9 @@ uint32_t read_filenames_to_buffer(char *dir_path) {
     return size;
 }
 
-void convert_ntoh(message *msg){
-    msg->type = ntohs(msg->type);
-    msg->file_begin=ntohl(msg->file_begin);
-    msg->fragment_size=ntohl(msg->fragment_size);
-    msg->length = ntohs(msg->length);
-}
+
 
 int main(int argc, char *argv[]){
-    printf("%d", NAME_MAX);
     uint32_t already_sent;
     int sock, msg_sock;
     struct sockaddr_in server_address;
@@ -139,7 +118,6 @@ int main(int argc, char *argv[]){
     if(argc == 3)
         port = (uint16_t) atoi(argv[2]);
     strcpy(dir_path, argv[1]);// dir_path
-    // strcat(dir_path, "/");
     sock = socket(PF_INET, SOCK_STREAM, 0); // creating IPv4 TCP socket
     if (sock <0)
         syserr("socket");
@@ -153,12 +131,12 @@ int main(int argc, char *argv[]){
         syserr("bind");
 
     // switch to listening (passive open)
-    if (listen(sock, QUEUE_LENGTH) < 0)
+    if (listen(sock, SOMAXCONN) < 0)
         syserr("listen");
 
     printf("accepting client connections on port %hu\n", ntohs(server_address.sin_port));
     //TODO infinity loop
-    for (int i = 0; i < 100000; i++) {
+    for (int i = 0; i < 1000000000; ++i) {
         client_address_len = sizeof(client_address);
         // get client connection from the socket
         msg_sock = accept(sock, (struct sockaddr *) &client_address, &client_address_len);
@@ -168,29 +146,34 @@ int main(int argc, char *argv[]){
         bool notReceived = true;
         size_t expected_len = sizeof(uint16_t);
         do {
-            //TODO przeczytaj tylko 2 bajty najpierw i potem coś zrób z resztą
             remains = expected_len - prev_len; // number of bytes to be read
-            len = read(msg_sock, ((char*)&data_read) + prev_len, remains);
+            len = read(msg_sock, ((char *) &data_read) + prev_len, (size_t) remains);
             if (len < 0)
                 syserr("reading from client socket");
             else if (len>0) {
-                printf("read %zd bytes from socket, expected: %d\n", len, sizeof(data_read));
                 prev_len += len;
-
-                if (prev_len == expected_len) {
+                if (prev_len == (ssize_t) expected_len) {
                     // we read 2 bytes, but if it was not list of file request we need extra info
-                    if (ntohs(data_read.type) != LIST_OF_FILES && expected_len != sizeof(data_read)) {
-                        expected_len = sizeof(data_read);
+                    int x = ntohs(data_read.type);
+                    if (ntohs(data_read.type) != SEND_LIST && expected_len < sizeof(data_read) - MAX_FILE_NAME_LENGTH) {
+                        expected_len = sizeof(data_read) - MAX_FILE_NAME_LENGTH;
                         continue;
                     }
+
+                    if (ntohs(data_read.type) == SEND_FRAGMENT
+                        && expected_len <= sizeof(data_read) - MAX_FILE_NAME_LENGTH) {
+                        expected_len = sizeof(data_read) - MAX_FILE_NAME_LENGTH + ntohs(data_read.length);
+                        continue;
+                    }
+                    printf("Received: %d bytes \n", expected_len);
                     // we have received a whole structure. let's check first value.
-                    convert_ntoh(&data_read);
+                    convert_client_message(&data_read, false);
+                    data_read.file_name[data_read.length] = '\0';
                     switch(data_read.type){
                         case SEND_LIST:
                             //read filenames to buffer
                             size = read_filenames_to_buffer(dir_path);
                             //send filenames in parts of 512KiB
-                            //SEND LAST FRAGMENT
                             bool firstFragment = true;
                             server_message list_of_file = {1, size};
                             convert_server_message(&list_of_file, true);
@@ -201,19 +184,17 @@ int main(int argc, char *argv[]){
                                 size -= currently_sending;
                                 send_filefragment(&already_sent, &currently_sending, list_of_file, firstFragment, msg_sock);
                                 firstFragment = false;
-                                //SEND FRAGMENT
                             }
+                            //last fragment
                             uint32_t currently_sending;
                             currently_sending = size;
                             send_filefragment(&already_sent, &currently_sending, list_of_file, firstFragment, msg_sock);
                             prev_len = 0;
                             break;
-                        case SEND_FRAGMENT:printf("we're ready to send the fragment\n");
+                        case SEND_FRAGMENT:
                             notReceived = false;
                             //check if fragment is not 0
                             if(data_read.fragment_size == 0){
-                                //zero fragment size
-                                printf("zero fragment");
                                 send_error_message(msg_sock, ZERO_SIZE_FRAGMENT);
                                 break;
                             }
@@ -221,10 +202,8 @@ int main(int argc, char *argv[]){
                             strcpy(file_path, dir_path);
                             strcat(file_path, "/");
                             strcat(file_path, data_read.file_name);
-                            printf("wow");
                             int f = open64(file_path, O_RDONLY);
                             if (f < 0) {
-                                printf("f<0");
                                 // file does not exist
                                 send_error_message(msg_sock, WRONG_FILE_NAME);
                                 break;
@@ -234,7 +213,6 @@ int main(int argc, char *argv[]){
                                 syserr("lseek64");
                             }
                             if (sz < data_read.file_begin) {
-                                printf("sz < file_begin");
                                 //not correct adress
                                 send_error_message(msg_sock, WRONG_START_ADRESS);
                                 break;
@@ -242,31 +220,24 @@ int main(int argc, char *argv[]){
                             if (lseek64(f, data_read.file_begin, SEEK_SET) < 0) {
                                 syserr("lseek64");
                             }
-                            //file seeked here
                             //now time to send file to client
-                            // READ TO OUR BIG BUFFOR FIRST, then send in parts
                             already_sent = 0;
-                            //bool NotReadEverythingYet = true;
                             bool first = true;
                             if (sz - data_read.file_begin < data_read.fragment_size) {
-                                data_read.fragment_size = sz - data_read.file_begin;
+                                data_read.fragment_size = (uint32_t) sz - data_read.file_begin;
                             }
                             server_message filefragment = {3, data_read.fragment_size};
                             convert_server_message(&filefragment, true);
-                            printf("wow2");
                             while (data_read.fragment_size > 0) {
-                                printf("Sending..\n");
-                                int size_to_read =
-                                    BUFFER_SIZE < data_read.fragment_size ? BUFFER_SIZE - first * sizeof(server_message)
-                                                                          : data_read.fragment_size
-                                        - first * sizeof(server_message);
-                                read(f, filenames, size_to_read);
-                                already_sent = 0; // need to reset this
-                                //fread(filenames, 1, size_to_read, f);
+                                uint32_t size_to_read = minimum(BUFFER_SIZE, data_read.fragment_size);
+                                size_to_read -= first * sizeof(server_message);
+                                if (read(f, filenames, size_to_read) < size_to_read) {
+                                    syserr("partial/failed read");
+                                }
+                                already_sent = 0;
                                 send_filefragment(&already_sent, &size_to_read, filefragment, first, msg_sock);
                                 first = false;
                                 data_read.fragment_size -= size_to_read;
-                                //NotReadEverythingYet = false;
                             }
                             break;
                         default:break;
