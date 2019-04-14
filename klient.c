@@ -12,7 +12,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#define BUFFER_SIZE 100
+#define BUFFER_SIZE 524288
 #define NUMBER_OF_FILES 65536
 char buffer[BUFFER_SIZE];
 char filenames[NUMBER_OF_FILES * (NAME_MAX + 2)];
@@ -215,7 +215,6 @@ void save_answer_from_server(int sock, server_message *recv_msg, message *msg) {
         len = size;
         prev_len = 0;
         while (len > 0) {
-            printf("%d bajtów \n", recv_msg->length % BUFFER_SIZE);
             remains = recv_msg->length % BUFFER_SIZE - prev_len;
             len = read(sock, buffer + prev_len, (size_t) remains);
             if (len < 0) {
@@ -349,7 +348,7 @@ int main(int argc, char *argv[]){
         }
     } while (!FileReceived);
 
-    //after receiving file, client closes sock
+    //after receiving file or error message, client closes sock
     close(sock);
 
     return 0;
