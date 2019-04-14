@@ -1,4 +1,5 @@
-#define _LARGEFILE64_SOURCE
+
+#define _LARGEFILE64_SOURCE //for lseek64
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -13,7 +14,7 @@
 #include "common_structs.h"
 #include "err.h"
 #define PORT_NUM 6543 // default port
-#define BUFFER_SIZE 100
+#define BUFFER_SIZE 524288
 #define NUMBER_OF_FILES 65536
 char dir_path[PATH_MAX];
 char file_path[PATH_MAX];
@@ -166,7 +167,6 @@ int main(int argc, char *argv[]){
                     }
                     // we have received a whole structure. let's check first value.
                     convert_client_message(&data_read, false);
-                    data_read.file_name[data_read.length] = '\0';
                     switch(data_read.type){
                         case SEND_LIST:
                             //read filenames to buffer
@@ -189,13 +189,8 @@ int main(int argc, char *argv[]){
                             send_filefragment(&already_sent, &currently_sending, list_of_file, firstFragment, msg_sock);
                             prev_len = 0;
                             break;
-                        case SEND_FRAGMENT:
+                        case SEND_FRAGMENT:data_read.file_name[data_read.length] = '\0';
                             notReceived = false;
-                            //check if fragment is not 0
-                            if(data_read.fragment_size == 0){
-                                send_error_message(msg_sock, ZERO_SIZE_FRAGMENT);
-                                break;
-                            }
                             long long sz;
                             strcpy(file_path, dir_path);
                             strcat(file_path, "/");
@@ -224,10 +219,16 @@ int main(int argc, char *argv[]){
                             if (sz - data_read.file_begin < data_read.fragment_size) {
                                 data_read.fragment_size = (uint32_t) sz - data_read.file_begin;
                             }
+                            //check if fragment is not 0
+                            if (data_read.fragment_size == 0 || sz - data_read.file_begin == 0) {
+                                send_error_message(msg_sock, ZERO_SIZE_FRAGMENT);
+                                break;
+                            }
                             server_message filefragment = {3, data_read.fragment_size};
                             convert_server_message(&filefragment, true);
                             while (data_read.fragment_size > 0) {
-                                uint32_t size_to_read = minimum(BUFFER_SIZE, data_read.fragment_size);
+                                uint32_t size_to_read =
+                                    minimum(BUFFER_SIZE, data_read.fragment_size + sizeof(server_message) * first);
                                 size_to_read -= first * sizeof(server_message);
                                 if (read(f, filenames, size_to_read) < size_to_read) {
                                     syserr("partial/failed read");
@@ -242,7 +243,10 @@ int main(int argc, char *argv[]){
                     }
                 }
             }
-        } while (notReceived && len>0);//?
+        } while (len > 0);
+        if (len == 0) {
+            close(msg_sock);
+        }
     }
     return 0;
 }
